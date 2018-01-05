@@ -1,0 +1,333 @@
+================= trap.handler =================
+lines 1-197:
+  -comments on previous version updates
+  
+lines 199-223:
+  -exception messages put into memory. Uses .kdata - kernel data
+  
+lines 225-260:
+  -kernal data at address 0x80000080 - addr. -notrap in SPIM manual mentions trap handler
+   beginning at this address.
+  -in kernel mode, and uses registers $k0 and $k1 (reserved for OS kernel)
+  -this routine is from SPIM.
+  
+lines 260-284:
+  -info on functions
+  -registers $s0-$s7 are preserved
+  - $s7 - limit pointer, $gp - heap ptr (never handled by generated code!)
+    $sp - stack ptr, $ra - return addr
+  - $v0,$v1,$t0,$t1,$t2,$a0,$a1,$a2 - CAN change
+
+lines 285-380:
+  -start up code (evoke main with no args)
+  -in data space .data - data segment
+  -labels for different error messages [_abort_msg,_dispatch_msg,_objcopy_msg,...]
+  -labels for GenGC garbage collector [_GenGC_COLLECT,_GenGC_Major,...]
+  -labels for NoGC garbage collector [_NoGC_COLLECT - "Increasing heal...\n"]
+  -define constants [obj_tag,obj_size,obj_attr,int_slot,bool_slot,str_maxsize]
+  -MemMgr_REG_MASK=0x007F0000 - register mask for $s0-$s6. This is ANDed with 
+   ARU (Automatic Register Update) mask. Therefore only registers specified in the GC
+   ARU mask can be automatically updated
+  - 1) __start: label
+  - 2) calls _MemMgr_Init : sets $gp and $s7 limit
+  - 3) loads address of 'Main_protObj' into $a0
+  - 4) calls Object.copy
+  - 5) saves the Main obj on the stack
+  - 6) calls 'Main_init' and then calls the method: 'Main.main'
+  - 7) restores the stack, shows terminal message and exits
+  
+lines 380-1033:
+  -Functions listed
+  -[equality_test:] equal if 1) ptrs are equal
+                             2) have same tag and are of type BOOL,STRING,INT and
+							   contain same DATA
+   -Tags for Int,Bool,String are in global locations: _int_tag,_bool_tag,_string_tag
+     these are located in the code e.g. : #define BOOLTAG "_bool_tag"
+	 initialized as a global in cgen.cc with 'boolclasstag' - ln:624 - input by user (ME!)
+	 see: CgenClassTable::CgenClassTable
+   -Algorithm: 1) check for a1 and a2 for void 
+               2) check obj_tag of a1 and a2 (1st position of ptrs)
+			   3) try to find int,bool or string tags (and do the respective functions)
+			   *4) seems to return false on non-primitive types
+			  
+  -[_dispatch_abort:]
+   -Algorithm: 1) save line # (from $t1)
+               2) move 16 to ascii sequance begining (in $a0)
+			   3) print filename : line # : dispatch to void
+			   4) exit
+	
+  -[_case_abort2:]
+   -Algorithm: like [above]
+               1) print filename : line # : case on void
+  
+  -[_case_abort:]
+    -Result: prints abort message, prints class name, exit
+	
+  -[Object.copy:]
+    -Result: cpy object ($a0), returns ptr ($a0) to new object in heap. 
+	-Requirements: $a0 is object to be copied.
+	-Algorithm: 1) creates stack frame (save $ra and $a0)
+	            2) tests GC area (_MemMgr_Test)
+				3) checks size
+				4) call _MemMgr_Alloc
+				5) $a1 is ptr to new obj, remove frame ($a0 = object, $ra = return addr), get obj size in words
+				6) calls _objcopy_allocated : which does word by word copy
+				7) puts the new obj in $a0
+				8) exit
+	
+  -[Object.abort:]
+    -Result: aborts the program. $a0 contains obj which function was dispatched to.
+	-Algorithm: 1) print _abort_msg
+	            2) class_nameTab from CLASSNAMETAB from cGenClassTable::code_global_data()
+				3) print classname
+				4) exit
+				
+  -[Object.type_name:]
+    -Result: $a0 reference to class name string object
+	-Algorithm: 1) load addr of class_nameTab -> $t1
+	            2) $a0 obj_tag is placed in $v0
+				3) $v0 * 4
+				4) add $t1 + $v0
+				5) loads class name string obj ( 4) )
+				6) return $ra
+				
+  -[IO.out_string:]
+   -Result: prints contents of string obj arg (top of stack)
+   -Notes: preserves $a0, pops argument, and exits
+   
+  -[IO.out_int:]
+   -Result: prints int at the top of stack
+   -Notes: preserves $a0, pops argument off stack, and exits
+   
+  -[IO.in_int:]
+   -Result: returns int in $a0, from terminal
+   -Notes: saves $ra, calls copy, Int_init, syscall 5: int->$v0, saves $v0
+           int int_slot of $a0 and return
+		   
+  -[IO.in_string:]
+   -Result: returns string obj from terminal remiving '\n'
+   -Notes: method does a lot of things
+   
+  -[String.length]
+   -Result: $a0 the int object which is size of str
+   
+  -[String.concat]
+   -Result: take $a0 (self) and top of stack for second string. In $a0 outputs the new
+            string object.
+			
+  -[String.substr]
+   -Result: Input is $a0, the string, and ints -4 and -8 off the stack for range. Returns
+            the substring of $a0 from i with length l.
+	
+lines: 1033-1056
+  -MemMgr Memory Manager - functions include to initialize the collector and to reserve memory
+    and query its status.
+  -Assumptions: 
+    1) $gp ptr is incremented on every allocation. $s7 ptr is a limit. Collector is
+	   called before $s7 exceeds $gp
+	2) Init functions all take same arguments as defined in "_MemMgr_Init"
+    3) GC functions all the args: $a0 contains end of the stack to check for ptrs,
+	   $a1 contains size in bytes needed by the program and must be preserved across
+	   the function call.
+	
+lines 1057:1199 
+  -[_MemMgr_Init]
+   -In: $a0 - start of stack, $a1 - inital Register Mask, $a2 - end of heap, heap_start - start of heap
+   -out: $gp lower bound of work area, $s7 uppder bound of work area.
+   -uses _MemMgr_INITIALIZER - defined in .s file (from ::code_select_gc() 
+    -> gc_init_names[cgen_Memmgr]. gc_init_names holds 3 init modes all defined in the 
+    trap.handler. cgen_Memmgr is set by cmdline args (-g) in handle_flags.cc
+   -
+  -[_MemMgr_Alloc]
+   -In: $a0 - size of allocation (bytes) $s7 - limit of work area, $gp - current alloc ptr
+        heap_start - start of heap
+   -Out: $a0 ptr to new mem block	
+  -[_MemMgr_QAlloc]
+   -Result: check requested amount of memory can be allocated
+   -In: $a0 size of allocation (bytes) $s7 - limit of work area, $gp - current allocation ptr
+        heap_start - start of heap
+		
+  -[_MemMgr_Test]
+   -Result: runs GC to detect GC bugs earlier
+   -In: usual GC stuff
+   -Out: none
+	
+ln: 1200
+  GenGC Generational Garbage Collector
+   -General description of the GC algorithm used.
+
+#   During a normal allocation and minor collections, the heap has the
+#   following form:
+#   
+#      Header
+#       |
+#       |   Older generation objects
+#       |    |
+#       |    |             Minor garbage collection area
+#       |    |              |
+#       |    |              |                Allocation area
+#       |    |              |                 |
+#       |    |              |                 |           Assignment table
+#       |    |              |                 |            |
+#       |    |              |                 |            |   Unused
+#       |    |              |                 |            |    |
+#       v    v              v                 v            v    v
+#     +----+--------------+-----------------+-------------+---+---------+
+#     |XXXX| Old Area     | Reserve Area    | Work Area   |XXX| Unused  |
+#     +----+--------------+-----------------+-------------+---+---------+
+#      ^    ^              ^                 ^    ^        ^   ^         ^
+#      |    |              |                 |    |-->  <--|   |         |
+#      |    L0             L1                L2  $gp      $s7  L3        L4
+#      |
+#     heap_start
+#
+#     $gp (allocation pointer): points to the next free word in the work
+#         area during normal allocation.  During a minor garbage collection,
+#         it points to the next free work in the reserve area.
+#
+#     $s7 (limit pointer): points to the limit that $gp can traverse.  Between
+#         it and L3 sits the assignment table which grows towards $gp.
+#
+#   During a Major collection, the heap has the following form:
+#
+#      Header
+#       |
+#       |   Older generation objects
+#       |    |
+#       |    |                 Objects surviving last minor garbage collection
+#       |    |                  |
+#       |    |                  |         Major garbage collection area
+#       |    |                  |          |
+#       v    v                  v          v
+#     +----+------------------+----------+------------------------------+
+#     |XXXX| Old Area         | X        | New Area                     |
+#     +----+------------------+----------+------------------------------+
+#      ^    ^                  ^      ^   ^      ^                       ^
+#      |    |                  |      |   |      |-->                    |
+#      |    L0                 L1     |   L2    $gp                   L4, $s7
+#      |                              |
+#     heap_start                     breakpoint
+   
+   -Assumptions:
+     1) Ptrs on stack: every word on stack that ends in 0 (even) and is a valid address
+	    in the heap is assumed to point to object in heap. (Even ints, which happen to
+		be a heap address will cause a GC error) [see lecture notes]
+		
+	 2) Object layout: Besides Int, String and Bool, GC assumes each attr in an object
+	    is a ptr to another object.
+		
+	 3) Ptr Tests: to verifiy an object it does the following tests:
+	    a) ptr must point to correct storage area.
+		b) word before ptr (obj_eyecatch) must be word 0xFFFF FFFF
+		c) word at the ptr must not be 0xFFFF FFFF (i.e. -1 cannot be class tag!)
+		These checks are performed on any data (which could be a pointer). Functions that
+		do this are : "_GenGC_ChkCopy" and "_GenGC_OfsCopy"
+		
+	 4) Size stored in object doesn't require the word required to store eyecatcher for object 
+	    in heap. Aka prototypes obj do not require their own eyecatchers. Also size 0 is invalid
+		since it's used as a flag by GC to indicate a forwarding ptr in "obj_disp" field
+		
+	 5) Roots are contained in following areas: the stack, registers specified in REG mask, 
+        and assignment table.	 
+		
+ln 1374:2491
+  -Code for GC
+  -Header offsets from 'heap_start'
+  -Heap is always expanded in multiples of 2^k, k = granularity
+  -ARU: set to all possible regs GC can handle (ANDed with REG Mask)
+    0xC37F 0000 - $s0-$s6, $t8-$t9, $s8, $ra
+  -Functions:
+   [_GenGC_Init]
+    -generates header block for GC, right after 'heap_start'. Calculates barrier and reserve
+	 work areas and sets L2.
+	-Out: lower bound of work area $gp, and upper bound $s7
+
+   [_GenGC_Assign]
+    -records an assignment in assignment table.
+
+   [_GenGC_Collect]
+    -general GC. It first calls minor collector [_GenGC_MinorC] and then updates its history
+	 in the header. Breakpoint is calculated. If bkpoint is reached or still not enough room
+	 major GC is called [_GenGC_MajorC]. After this size of old area is analyzed to see if
+	 heap needs to be expanded. 
+	-Out: $a1: size will need to allocate in bytes
+
+   [_GenGC_ChkCopy]
+    -Checks that he input ptr points to a heap object. Checks for a forwarding ptr by checking
+	 for object of size 0. If found forwarding ptr is returned. If not, object is copied to $gp 
+	 and ptr to it is returned. 
+
+   [_GenGC_MinorC]
+    -Minor GC. Evoked when space in work area is used up by objects and assignment table.
+	 The live objects are found and copied to reserve area. The L2 ptr is set to the end of life
+	 objs. 6 Phases:
+	  1) set $gp into serve and set inputs for ChkCopy.
+	  2) scan stack for root ptrs into heap. Validate each pointer.
+	  3) Check registers specified in REG. _GenGC_ChkCopy will update the result.
+	     _GenGC_SetRegMask can be used to update the mask
+	  4) assignment table is checked. $s7 is moved into L3 ptr. Each entry is a ptr
+	     to a ptr that must be checked. _GenGC_ChkCopy is used and ptr updated.
+	  5) Now all root objects are in reserve area. Area is traversed (L1 -> $gp). It results
+	     in breadth first seach of the live objects. All attrs of objects are treated as ptrs
+		 except for "Int", "Bool" and "String". Only "String" is analyzed to see if it has
+		 its first attr as a ptr to "Int" object.
+	  6) L2 is set to end of live objects in reserve area. This is a prep for a major collection.
+	     size of all live objects is computed and returned.
+	
+	[_GenGC_OfsCopy]
+	 -Checks if input ptr is an object in heap. If so ptr is check to be in 1 of 2 areas: 
+	   X area -   L0-L1 is added to the ptr and new ptr is returned
+	   Old area - checks for a forwarding ptr by checking for an object of size 0, if so
+	              forwarding ptr is returned.
+	   Not found - heap is analyzed to see if object can be copied. If so it expends heap
+	               (updates only $s7) and copies obj to the $gp ptr. It takes new ptr and
+				   adds L0-L1 to it and sets flag (obj_size = 0). Returns this ptr.
+	
+	[_GenGC_MajorC]
+	 -This occurs when old area grows beyond a specified point. The minor collector sets 
+	  up the Old, X and New areas for this collector. Then it collects all live objects
+	  in the old area (L0 to L1) into the new area (L2 to L3). The 5 phases:
+	   1) Set $gp into new area (L2) and $s7 = L4. Call [_GenGC_OfsCopy]
+	   2) Traverse the stack using [_GenGC_OfsCopy] (Minor collect style)
+	   3) Check the registers using [_GenGC_OfsCopy] (Minor collect style)
+	   4) Traverse heap from L1 -> $gp using [_GenGC_OfsCopy]. Also includes X area.
+	   5) Block copy the region L1 to $gp back into L1-L0 to create next old area. 
+	      Save the end in L1. Calculate size of live objects collected from old area and
+		  return this value.
+	
+	[_GenGC_SetRegMask]
+	 -set a new register mask. This will be anded with the ARU mask. 'heap_start' will be
+	  needed by the caller.
+	  
+	[_GenGC_QRegMask]
+	 -query the registers mask REG. Caller needs start of heap.
+	 
+	[_NoGC_Init]
+	 -No GC, only expends the heap if more memory is needed
+	 -Inits $gp to lower bound of work area and $s7 to upper bound
+	
+	[_NoGC_Collect]
+	 -expands the heap as necessary.
+	 -In: $a1 - size in bytes, $s7 - limit pointer of thew new work area, $gp - current allocation ptr
+	 -Out: $a1 - size will need to allocated in bytes (unchanged)
+	 
+
+	   
+	
+	creatine - 1g/day naturally. EFSA states 3g pure creatine/day is risk free.
+	5-20 g/day appears very safe, with no side-effects
+	loading dose - 1-2 weeks of 12-24g/day. Post loading of 2-5g
+	
+	
+	extern enum Memmgr { GC_NOGC, GC_GENGC, GC_SNCGC } cgen_Memmgr; so [0,1,2]
+	cgen_Memmgr = GC_GENGC || = GC_NOGC [1, 0]
+	gc_init_names[cgen_Memmgr] : [1, 0]
+	static char *gc_init_names[] =
+     { "_NoGC_Init", "_GenGC_Init", "_ScnGC_Init" };
+	 
+	 therefore: "_NoGC_Init" or "_GenGC_Init" get placed in *.s file in GC select
+	 
+	 
+	
+
+  

@@ -1,0 +1,59 @@
+class_objTab:
+	.word	Object_protObj 0 [0]
+	.word	Object_init    1 [4]
+	.word	IO_protObj     2 [8]  k
+	.word	IO_init        3 [12]
+	.word	Main_protObj   4 [16] k
+	.word	Main_init      5 [20]
+	.word	B_protObj      6 [24] k
+	.word	B_init         7 [28]
+	.word	Int_protObj    8 [32] k
+	.word	Int_init       9 [36]
+	.word	Bool_protObj   10 [40] k
+	.word	Bool_init      11 [44]
+	.word	String_protObj 12 [48] k
+	.word	String_init    13 [52]
+    
+    t1 -> class_objTab + 6 -> B_protObj
+    s1 -> B_probObj
+    a0 -> t1 (B_protObj) -> copy of B_protObj
+    t2 -> 2 * 3 -> 6
+    
+    coolc: uses Main (my program currently uses current_class in the node it is called
+           from all the expressions) (coolc uses the tag of SELF translated into the 
+           class_objTab)
+           Note: must determine if my method can work at all times?
+           
+           dispatch call:
+                  if char = "a" then -- add
+                     {
+                        a_var <- (new A).set_var(get_int());
+	                    avar <- (new B).method2(pav, pav1);
+	             } else
+        pushing pav and pav1 onto stack:
+	lw	$a0 28($s0)
+	sw	$a0 0($sp)
+	addiu	$sp $sp -4
+	lw	$a0 32($s0)
+	sw	$a0 0($sp)
+	addiu	$sp $sp -4
+
+    
+   method2(num1 : Int, num2 : Int) : B {  -- plus
+      (let x : Int in
+	 {
+            x <- num1;
+	    (new B).set_var(x);
+	 }
+      )
+   };    
+      in method2:
+    access pav:     lw	$s1 20($fp)
+    access pav1:    lw	$s1 16($fp)
+    
+    save into 0($fp) : questionable saving $s1 into $fp 
+    	sw	$s1 0($fp)
+	    jal	B_init
+	    lw	$s1 0($fp)
+	    sw	$s1 0($fp)
+      ...call of method proceedes (set_var)

@@ -1,0 +1,46 @@
+cgen.cc
+  cgen.h
+  cgen_gc.h
+  
+cgen.h                 [check]
+  <assert.h,stdio.h>
+  emit.h
+  cool-tree.h
+  symtab.h
+  
+cgen_gc.h              [check]
+
+emit.h                 [check]
+  stringtab.h
+  
+cool-tree.h            [check]
+  tree.h
+  cool-tree.handcode.h
+  
+symtab.h               [check]
+  list.h
+
+stringtab.h            [check]
+  <assert.h, string.h>
+  list.h
+  cool-io.h
+  
+tree.h                 [check]
+  stringtab.h
+  cool-io.h
+  
+cool-tree.handcode.h   [check]
+  <iostream>
+  tree.h
+  cool.h
+  stringtab.h
+  
+list.h                 [check]               
+  <stdlib.h>
+  cool-io.h  //includes iostream
+  
+cool-io.h              [check]
+
+cool.h                 [
+  cool-io.h
+  

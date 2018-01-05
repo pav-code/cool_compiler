@@ -1,0 +1,493 @@
+===============================================================================
+==================== Assignment 4 - Code Generation ===========================
+====================             Notes              ===========================
+===============================================================================
+   
+   From: Assignment Outline [PA4.pdf]
+Intro:
+  -No error recovery!
+  -Generate MIPS assembly
+  -~3000 lines of code
+  -Learn: behaviour of Cool constructs, interface between runtime system and
+   generated code
+    -Operational Semantics: expected behaviour (Cool Manual, Section 13)
+	-Interface between runtime and generated code: (Cool Tour, The Cool Runtime
+     System).
+
+Files:
+  cgen.cc - Entry: program_class::cgen(ostream&) - called on Root of AST.
+    Constants provided, functions for emitting MIPS instructions, skeleton for
+	strings, ints and bools, and a class table (CgenClassTable). This table can 
+	be replaced with my previous InhTree <map>.
+  cgen.h - header. Contains classes for implementing inheritance graph.
+  emit.h - contains macros for emitting MIPS instructions.
+  cool-tree.h - AST Nodes, class declarations go for AST classes additions, 
+    implementation goes into cgen.cc.
+  cgen_supp.cc - support code for code generator. Contains several handy functions.
+  example.cl - your own test file.
+  README - instructions for assignment and tips.
+  
+Design:
+  -They tell me to read 'The Cool Runtime System' first.
+  -High-level design:
+    1) Determine/emit code for global constants (e.i. prototype objects)
+	2) Determine/emit code for global tables (i.e. class_nameTab, class_objTab,
+	   dispatch tables)
+	3) Determine/emit code for initialization method of each class.
+	4) Determine/emit code for each method definition.
+  -Design idea: Do 2 passes:
+    a) decide object layout for each class, offset where each attr is stored in 
+	   an object.
+	b) recursively walks each feature and generate stack machine code for each expr
+  -Things to keep in mind:
+    -CGen must work with runtime system!
+	-clear picture of runtime semantics of COOL programs (beginning of 'Cool Reference
+	 Manual'), and section 13.
+	-Understand MIPS ISA. See spim documentation.
+	-Invariance in CGen: registers saved, overwritten, etc. See lecture notes.
+	-No need to compare with coolc, only need to generate code that runs correctly
+	 with runtime system.
+	 
+3.1 Runtime Error Checking
+  -In COOl manaul, there are 6 errors which terminate the program. Generated code
+   should catch first 3: [dispatch] on void, [case] on void, [branch] missing. Print
+   an error message before aborting. [arith] divide by 0 can be caught by SPIM, 
+   [substring out of range] and [heap overflow] is caught by runtime system in 
+   trap.handler 
+  - Figure 4, in Cool Runtime System: Error message functions to be used!
+
+3.2 Garbage Collection
+  -Must interface with garbage collection in COOL runtime. 
+  -Function: 'code_select_gc' - generates code, sets GC options from command
+   line flags.
+  -cmdline flags for GC: -g, -t and -T. 
+    -g: enables GC. Reclaims memory, checks "-1" is between all heap objects
+	 to make sure accidental overwrite, at end of object, by program (or collector).
+	-t: GC performs collections very frequently (every allocation)
+	-T: not directly used by GC. Gives extra generated code to perform more runtime
+	 validity checks.
+  -Hint: don't use GC at the beginning. Make sure you understand the garbage
+   collection interface (making sure CGen works with GC is NOT trivial).
+  -mycoolc takes -c flag which sets 'cgen_debug' which is a global variable set true.
+ 
+4.1 Coolaid
+  -Tool to help verify MIPS assembly code produced by CGEN. Imposes restrictions
+   on the assembly code, beyond the runtime system's. May not be used. Coolaid-specific
+   restrictions in 'Cool Runtime System' can be ignored (but are helpful in assembly
+   structure!!).
+  
+4.2 Spim and XSpim
+  -xspim  let's you examine the VM's state: memory locations, registers, data
+   segments, and code segments of the program. Breakpoints and single step debug
+   are also available!
+  Warning: spim's is an interpreter not an assembler. I.E. undefined labels only
+  show up if code refers to them, errors are reported only for code section of
+  program: constant data definitions that refer to undefined labels - it will just
+  assume a value of 0.
+  
+ 
+   From: Cool-Tour. Chapter 7 - The Runtime System
+Intro:   
+  -The cool runtime system consists of hand-coded assembly (MIPS it appears) instructions
+   used as subroutines by COOL programs: /home/compilers/cool/lib/trap.handler
+  -CGen must adhere to the runtime system
+  -Runtime System has 4 classes of routines:
+    1) startup code, invokes main method in main program
+	2) code for methods of Basic Classes (IO, String, Object)\
+	3) functions for equality testing in COOL and runtime errors
+	4) the garbage collector GC.
+  -Runtime is loaded with spim/xspim. 
+
+7.1 Object Header
+  -First 3 32-bit words of each object must contain: class tag, object size, ptr to dispatch info
+  -GC requires word immediately before an object to contain '-1' (not part of object)
+  -Object Layout:
+        ____________________________________________
+       | offset -4   | Garbage Collector Tag        |
+       | offset 0    | Class tag                    |
+       | offset 4    | Object size (in 32-bit words)|
+       | offset 8    | Dispatch ptr                 |
+       |_offset 12...|_Attributes___________________|
+	   
+	offset in bytes. 
+	a) GC Tag is -1. 
+	b) Class tag is a 32-bit INT for the class of the object (for equality cmps 
+	of basic classes, abort function to index each class) 
+    c) object size field and gc tag are maintained by runtime system. Only runtime system
+	should create new objects. (Note: prototype objects must be coded by CGen in static
+	data area, therefore CGen should set obj size field and GC tag prototypes. (static 
+	object must also initialize these fields)).
+	d) Dispatch ptr is not used by runtime, only by CGen. It is for us to design. It's
+	purpose is info on correct method to invoke on dynamic dispatch.
+	
+  -INT object: only attr is a 32-bit value of INT.
+  -BOOl object: only attr is 32-bit value of 1 or 0.
+  -STRING object: 1) attr is ptr to an INT representing the size of the string. 2)+ ASCII
+   sequence begins after (offset 16), terminates with a 0, and padded with 0's to word boundary
+  -void: a null pointer (32-bit value = 0)
+  
+7.2 Prototype Objects
+  -To allocate on the heap, must use 'Object.copy'. Each class must have an object to copy.
+  -CGen must produce a skeleton of object of class X in the data area (a prototype)
+  -Prototype must have collection tag, class tag, obj size and dispatch info (for GC).
+    -INT, BOOL, STRING attrs must refece to 'CoolAid'
+	-Other classes attributes of the prototypes are up to us for convinient implementation
+	
+7.3 Stack and Register Conventions
+  -Primitive methods of runtime system expect args in register $a0 and on the stack. 
+    -usually $a0 contains 'self' object of the dispatch. Additional args go on top of the
+	stack (first argument pushed first)
+        ______________________________________________
+	   |Scratch registers | $v0, $v1, $a0-$a2, $t0-$t4|
+	   |Heap ptr          | $gp                       |
+	   |Limit_ptr_________|_$s7_______________________|
+     
+	 Scratch: can be modified by runtime without restoring them.
+	 Heap ptr: keeps track of next free word on the heap (Runtime only)
+	 Limit ptr: keeps track where heap ends (Runtime only)
+	  *all other registers remain unmodified, except: $at, $sp, $ra.
+	  
+7.4 Labels Expected
+  -Runtime system expects some labels to point to code/data segments.
+  List:
+  Main_protObj   - prototype of Main class obj
+  Main_init      - code for init of obj class Main, passed in $a0
+  Main.main      - main method in Main, $a0 contains initial Main obj
+  Int_protObj    - prototype of INT
+  Int_init       - code for init of obj of class INT in $a0.  
+  String_protObj - "
+  String_init    - "
+  _int_tag       - word containing class tag for INT class
+  _bool_tag      - " BOOL "
+  _string_tag    - " STRING "
+  class_nameTab  - Table @ index (class tag)*4 has ptr to STRING object containing
+                   name of class associated with the class tag
+  bool_const0    - The BOOL object representing the boolean value false
+  
+  -no need for a BOOL class: both Bool objects' definitions are in the static data area.
+  -to ensure correctness do naming convention: 
+    <class>_init - for init code of class <class>
+	<class>.<method> - for method <method> code of class <class>
+	<class>_protObj - for prototype obj of class <class>
+
+  -the Runtime has the following labels defined:
+  Object.copy, Object.abort, Object.type_name 
+  IO.out_string, IO.out_int, IO.in_string, IO.in_int
+  String.length, String.concat, String.substr
+   *String.concat: returns new string. Made from string object on top of stack to
+    string object in $a0. Return value in $a0.
+  equality_test   - tests objectgs passed in $t1, $t2 have same basic type 
+                   {INT, STRING, BOOL} and same value. If true return $a0, else $a1.
+  _dispatch_abort - dispatch on a void. Prints line# (from $t1), filename from $a0,
+                    and aborts.
+  _case_abort     - should be called when case has no match
+  _case_abort2    - case attempted on void obj. Aborts as '_dispatch_abort'.
+  
+7.5 Execution Startup
+
+
+   From: Cool_manual. Chapter 13 - Operational Semantics
+
+Intro:
+   OS describe what each COOl expression must produce in given context. The context: 
+environment, store and self object. Remember OS is not an implementation, only a description.
+
+13.1 - Environment and the Store
+  -Environment: variable ID -> mem addr. For each expr we need an environment that assigns
+  a location to all IDs. (e.g. a + b, we need env that maps a and b to some locations)
+    Syntax:  E = [ a:l1, b:l2 ]
+  -Store: location -> value (values in COOL are objects). For integers, here is a store:
+    Syntax:  S = [ l1 -> 55, l2 -> 77 ]
+  -A variable lookup: E(a) = l1; S(l1) = 55;
+  -Together the store and environment define an execution state at a particular step of
+   evaluation, this combination also allows for modelling variables.
+  -Updating a value: E(a) = l   S' = S[v/l], let l'!=l : S'(l') = S(l'). Aka the store
+   is unchanged other than at location l with the value v.
+  -let exprs: modify the environment by adding a new variable before evaluating the body. 
+    Syntax: Lc = newloc(S), E' = E[Lc/c], S' = S[init/Lc].  newloc() applied to Store,
+	returns a unused location in the sore. We update the environment with the new location
+	and variable. Finally we update the store.
+	 *if variable already exists, we will hide the old mapping. And remember every value
+	 is actually an object
+   
+13.2 - Syntax for Cool Objects
+  -as before, every value is an object. Objects contain list of attrs, they belong to a class
+   v = X(a1 = l1, a2 = l2, ... ,an = ln) : the value v, is of class type X, contains attrs (a1-an) at
+     locations (l1-ln). (each attr has a space in memory)
+  -base objects: (Ints, Strings, Bools) have no attrs that can be modified:
+    Int(5), Bool(true), String(4, "Cool")
+
+13.3 - Class definitions
+  -in OS we need a way to refer to definitions of attrs and methods for classes.
+  -two mappings are done called class and implementation
+  -Class Mapping: used for attrs, their types, and inits - e.g:
+    class(A) = (s:String<-"Hello", a:Int<-0, b:B<-new B)
+	-Listing is from parents (highest ancestoral order) in the way they textually
+     appear, to the class itself - A.
+	-This order is required since we depend on it for how new objs are initialized.
+    -Also no that every attr has an initializing expression. Basic types defined,
+	 other classes are assigned 'void' (allowed to be an expr here - but only to the
+	 compiler and no programmers).
+	-Default type is denoted as Dt.
+
+  -Implementation Mapping: used to contain information about methods of a class.
+    -E.g. : implementation(A,f) = (x, x+a), in general:
+	        implementation(X,m) = (x1,x2,...,xN, expr_body)
+	
+13.4 - Operational Rules
+  -General form:              ______._._._______
+                              so,S,E |- e1 : v,S'
+  Here we have: 1) the context: so,S,E 2) expr e1 evaluated to return 3) value v
+                4) and a new store S' 5) the ... dots are for evaluation of
+				other subexprs of e1.
+  -so is used if 'self' appears in the expr. 'self' = so. (it's not a variable since
+   it cannot be assigned to)
+  -the new store from 4) is due to evaluation of expr e1.
+  
+  Cases:
+    [Assign]
+	 to prove: so,S,E |- Id <- e : v,S2
+	  1) so,S,E |- e : v, S1
+	  2) E(Id) = IdLoc
+	  3) S2 = S3[v1/IdLoc]
+	  
+	[Var]
+	 to prove: so,S,E |- Id : v,S
+	  1) E(id) = loc
+	  2) S(loc) = v
+	
+    [Self]
+	 to prove: so,S,E |- self : so,S
+	 
+	[True]
+     to prove:	so,S,E |- true : Bool(true),S
+	
+	[False]
+	 to prove: so,S,E |- false : Bool(false),S
+	 
+	[Int]
+	 to prove: so,S,E |- i : Int(i),S
+	  1) i is an integer constant
+	  
+	[String]
+	 to prove: so,S,E |- s : String(l,s),S
+	  1) s is a string constant
+	  2) l = length(s) (length function used)
+	  
+	[New]
+	 to prove: so,S,E |- new T : v,S2
+	  1) T0 = a) X if T=SELF_TYPE and so = X(...) [lookup type class form so]
+	          b) T otherwise
+      2) Lookup Class Mapping function (ALL attrs are returned): class(T0) = (a1:T1<-e1, ... , aN:TN<-eN) 
+	  3) i = 1->n  Li = newloc(S) : locations for new attrs
+      4) v = T0(a1 = L1, ... , aN = LN) : create new obj, assign to v, assign attrs the locations
+	  5) S1 = S[DT1/L1, ... ,DTN/LN]    : initialize all attrs with defaults (DT), update the store S
+	  6) E' = [a1:l1, ... ,aN:lN]       : environment for within an initializer only the new T's attrs are in scope, 
+	                                      nothing to do with outside function
+	  7) v,S1,E' |- {a1<-e1; ...; aN<-eN;} : v1, S2 : initializers in E', evaluated at the default, store S2 is updated.
+  
+    [Dispatch]
+	 to prove: so,S,E |- e0.f(e1, ... ,eN) : vN_p1,SN_p3 
+	  1) so,S,E  |- e1 : v1,S1    : evaluate N arguments, updating the Store.
+	  2) so,S1,E |- e2 : v2,S2
+	  3) ...
+	  4) so,Sn-1,E |- eN : vN, SN : final arg evaluated, and the store is SN
+	  5) so,SN,E   |- e0 : v0, SN_p1 : eval the expr we are dispatching
+	  6) v0 = X(a1=L_a1, ... ,aM=L_aM) : use v0's dynamic type (X) and grab class's argument locations
+	  7) implementation(X,f) = (x1, ... ,xN, eN_p1) : lookup in v0's type (X) method f
+	       and return the formals (x1->xN) along with the method body eN_p1.
+	  8) L_xi = newloc(SN_p1), for i = 1->N    : allocate space for formals of the method (in the store)
+	  9) E' = [a1:L_a1, ... ,aM:L_aM] [x1:L_x1, ... ,xN:L_xN] : environment E' inside the method
+           has the attrs of the object (v0), and the method formals. The formals are done second
+           by replacing any attr with the same name as a formal (formals take precedence in the 
+		   method body) [we only talking about locations here! Values come next]
+	  10) SN_p2 = SN_p1[v1/L_x1, ... ,vN/L_xN]  : place the values of the formals at their locations
+	  11) v0,SN_p2,E' |- eN_p1 : vN_p1, SN_p3   : eval function body. Context of v0 (obj we dispatch to)
+	       environment E' (method itself), and the resulting store (aval args, e0, actual params)
+	
+	[StaticDispatch]
+	 to prove: so,S,E |- e0 @ T.f(e1, ... ,eN) : 
+	  1) same as [Dispatch]
+	  2) except in 7) the call on implementation is strictly on T: implementation(T,f) = (x1, ..., xN, eN_p1)
+	       the method is guaranteed to be there by the type checker.
+	
+	[If-True]
+	 to prove: so,S,E |- if e1 then e2 else e3 fi : v1,S2
+	  1) so,S,E  |- e1 : Bool(true),S1
+	  2) so,S1,E |- e2 : v1,S2
+	  
+	[If-False]
+	 to prove: so,S,E |- if e1 then e2 else e3 fi : v1,S2 : seems return value of the if is by
+	   definition the object of the executed branch. 
+	  1) so,S,E  |- e1 : Bool(false),S1 : since the type check tells us a BOOL is here, it can only
+	                                      be true or false.
+	  2) so,S1,E |- e3 : v1,S2
+    
+	[Sequence]
+	 to prove: so,S,E |- {e1;e2; ...; eN;} : vN,SN  : uses the return of the last expr
+	  1) so,S,E  |- e1 : v1,S1    : evaluate each expression, update the store, return value(not used)
+	  2) so,S1,E |- e2 : v2,S2
+	  3) ...
+	  4) so,SN_m1,E |- eN : vN,SN : last expr, evaluted with SN_m1, returns vN value and SN store
+	  
+	[Let]
+     to prove: so,S,E |- let Id : T <- e1 in e2 : v2,S3
+	  1) so,S,E |- e1 : v1,S1
+	  2) loc = newloc(S1)
+	  3) S2 = S1[v1/loc]  : if e1 is no_expr_ then assign default of T
+	  4) so,S2,E' |- e2 : v2,S3
+	
+    *Note: multiple let statements indent each other
+	
+	[Case]
+	 to prove: so,S,E |- case e0 of Id1:T1=>e1; ... IdN:TN=>eN; esac : vi,S3
+	 1) so,S,E |- e0 : v0,S1
+	 2) v0 = X(...)                                 : find type of v0
+	 3) Ti = closest ancestor of X in {T1, ... ,TN} : require the class hierarchy 
+	 4) loc = newloc(S1)
+	 5) S2 = S1[v0/loc]                             
+	 6) E' = E[loc/Idi]                             : expr0 object get put into location of Idi
+	 7) so,S2,E' |- ei : vi,S3
+	 
+	*Note: review the [case] expr since it's not in the videos
+	
+	[Loop-False]
+	 to prove: so,S,E |- while e1 loop e2 pool : void,S1
+	  1) so,S,E |- e1 : Bool(false),S1
+	  
+    [Loop-True]
+	 to prove: so,S,E |- while e1 loop e2 pool : void,S3 : loops always return void
+	  1) so,S,E  |- e1 : Bool(true),S1 : true type of a predicate
+	  2) so,S1,E |- e2 : v1,S2         : evaluate the body, update store
+	  3) so,S2,E |- while e1 loop e2 pool : void, S3 : Run the loop again! (the execution 
+	                  continues in a nested fashion.
+	
+	[IsVoid-True]
+	 to prove: so,S,E |- isvoid e1 : Bool(true),S1
+	  1) so,S,E |- e1 : void,S1
+	  
+	[IsVoid-False]
+	 to prove: so,S,E |- isvoid e1 : Bool(false),S1
+	  1) so,S,E |- e1 : v1,S1
+	  2) v1 = X(...)          : v1 has a type that is not void
+	  
+	[Not]
+	 to prove: so,S,E |- not e1 : v1,S1
+	  1) so,S,E |- e1 : Bool(b),S1 : get a bool value 
+	  2) v1 = Bool(!b)             : invert b and return it
+	  
+	[Comp]
+	 to prove: so,S,E |- e1 op e2 : v1,S2
+	  1) so,S,E  |- e1 : Int(i1),S1
+	  2) so,S1,E |- e2 : Int(i2),S2
+	  3) operator {<=, <}
+	  4) v1 = a) Bool(true)  if i1 operator i2
+	          b) Bool(false) otherwise
+			  
+	[Neg]
+	 to prove: so,S,E |- ~e1 : v1,S1
+	  1) so,S,E |- e1 : Int(i1),S1
+	  2) v1 = Int(-i1)
+	  
+	[Arith]
+	 to prove: so,S,E |- e1 operator e2 : v1,S2
+	  1) so,S,E  |- e1 : Int(i1),S1
+	  2) so,S1,E |- e2 : Int(i2),S2
+	  3) operator {+,-,*,/}
+	  4) v1 = Int(i1 operator i2)
+	  
+	[Comparison]
+	 In e1 = e2, evaluate e1 then e2.
+	  1) Compare their pointers (addresses)
+	  2) value void is not equal to any but void itself
+	  3) if types are String,Bool, or Int their contents are compared
+	  
+	Runtime Errors:
+	 1) A dispatch (static or dynamic) on void.
+	 2) A case on void
+	 3) Execution of a case statement without a matching branch
+	 4) Division by 0
+	 5) Substring out of range
+	 6) Heap overflow
+	 
+	Execution on Primitive methods:
+	  dispatches to methods in Object, IO and String see - Sections 8.3-8.5
+	  
+	
+MIPS Instructions
+lw $r1 offset($r2)  : load [offset+$r2] into $r1
+add $r1 $r2 $r3     : r1 = r2 + r3
+sw  $r1 offset(r2)  : store $r1 @ ($r2 + offset)
+addiu $r1 $r2 imm   : $r1 = $r2 + imm
+li $r1 imm          : $r1 = imm
+beq $r1 $r2 label   : if $r1=$r2 jump to 'label'
+b label             : unconditional jump to 'label'
+jal label           : jump to 'label', save next ins. into $ra
+jr $r1              : jump to addr of $r1
+
+
+Assignment Notes:
+-from cool-tour: on objects
+ Int : has 1 attr the 32 bit value of the integer
+ Bool : 1 attr, 0 or 1 value of false or true
+ String : 1st attr; int to represent the lenght, 2nd attr; ASCII sequence of chars,
+          0 padded, null-terminated.
+ All other : other objects with no initialization are set to NULL.
+
+-from cool-tour: on initializing objects
+ <class>_init: to initialize an object of class <class>.
+ _init: should initialize all init code for parent classes, init all attr in Main.
+ 
+-from cool-tour: runtime functions
+ Object: copy, abort, type_name
+ IO:     out_string, out_int, in_string, in_int
+ String: length, concat, substr
+ Misc:   equality_test - primitive type check and comparison
+         _dispatch_abort - dispatch on void object (error)
+         _case_abort - case statement has no match (error)
+         _cast_abort2 - case on void (error)
+         
+-from cool-tour: on Program Startup
+ 1) fresh copy of Main prototype is made on heap (Main_prototype)
+ 2) code is ran to initialize it (Main_init)
+ 3) control passes to Main.main by passing ptr to heap's Main in register
+    $a0. $ra holds return address.
+ 4) if control returns from Main.main, execution halts with success message
+ 
+ 
+Context:
+ so - self object ( addr of self ) : contained in $s0
+ E - environment ( ID -> location ) : IDs are accessible from the c++ code. 
+     Locations are accessible in .s file using 'la' command.  
+ S - store ( location -> value ) :
+ 
+Idea: 
+  -Everything must be stored 
+  -Uninitialized variables in Classes only change code in the '_protObj' and in 
+   particular they change the size, and add a .word (0 - any user def class, 
+   'label' (addr) for default of any primitive)
+  -Attr initializers go into 'X_init': coolc seems to update the self object @ the
+   attr position. ($s0 seems to point to the "X_protObj"s copy) 
+  
+ 
+ 
+ ISA:
+   la $dest, addr : load addr into $dest (a label, etc)
+   lw $dest, addr : load 32-bit word from 'addr' into 'dest'
+   sw $src, addr : store 'src' at 'addr'
+   
+   move $dest, $src : move 'src' into 'dest'
+   
+   nop : do nothing
+   syscall : $v0 holds system call (print_[int,float,...], read_[int,float,...],sbrk,exit)
+      sbrk - seems to be used when dynamic alloc. moves data segment up.
+   
+ SPIM:
+   $fp - points below (lower addr) last arg passed in stack.
+   $sp - points to last word in frame.
+   
+   
+ Check: 
+   1) X_protObj should have defaults for primitive classes and 0 for custom
+
+  

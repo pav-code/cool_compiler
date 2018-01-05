@@ -1,0 +1,13 @@
+===============================================================================
+==================== Assignment 4 - Code Generation ===========================
+====================          Work Log              ===========================
+===============================================================================
+Time Allowed: 16 Days (21 days max!)
+
+Start   | Finish | Date |                  Activity
+12:16AM  1:36AM   4.29   Downloading files and setting up environment, PA4 Reading.
+12:24AM  1:55AM   4.30   Cool-tour (ch 7 - 7.4)
+3:20PM   4:54PM   4.30   Lectures: 'Runtime Organization'
+11:00PM  12:00Am  5.4    Cool-manual (ch 13 and 13.1)
+4:00PM   7:00PM   5.10   Finishing videos (rewatched). Opening Code in VM.
+4:42PM     -      6.16   Finished Code Generator

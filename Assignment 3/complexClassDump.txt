@@ -1,0 +1,12 @@
+=====================================================================
+submission: ..
+
+	-1 (hairyscary)	 Messy legal Cool program
+	-1 (returntypenoexist)	 Undefined return type
+done	-1 (self-assignment)	 Assignment to self (illegal)
+	-1 (selftypeparameterposition)	 SELF_TYPE given as a parameter type (illegal)
+	-1 (selftyperedeclared)	 SELF_TYPE redeclared (used a class name)
+	-1 (staticdispatch)	 Simple static dispatch
+	-1 (trickyatdispatch)	 Tricky (legal) static dispatch
+=====================================================================
+You got a score of 67 out of 74.
